@@ -11,16 +11,15 @@ from .architectures import SimpleBetaVAE, init_weights
 
 class MnistVAE(pl.LightningModule):
 
-  def __init__(self, beta=0.5, learning_rate=1e-3):
+  def __init__(self, hparams):
     """Initialize this model class.
 
     Parameters:
         hparams: training/test hyperparameters
     """
     super().__init__()
-    self.beta = beta
-    self.learning_rate = learning_rate
-    self.model = init_weights(SimpleBetaVAE())
+    self.hparams = hparams
+    self.model = init_weights(SimpleBetaVAE(z_dim=hparams.z_dim))
     self.eps = torch.finfo(torch.float).eps
 
   def forward(self, x):
@@ -29,11 +28,12 @@ class MnistVAE(pl.LightningModule):
 
   def loss_function(self, x_tilde, x, mu, logvar):
     BCE = nn.functional.binary_cross_entropy(x_tilde, x, reduction='sum')
-    KLD = self.beta * torch.sum(logvar.exp() - logvar - 1 + mu.pow(2))
+    KLD = self.hparams.beta * torch.sum(logvar.exp() - logvar - 1 + mu.pow(2))
     return BCE + KLD
 
   def configure_optimizers(self):
-    optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    optimizer = torch.optim.Adam(self.parameters(), 
+                                 lr=self.hparams.learning_rate)
     return optimizer
 
   def training_step(self, batch, batch_idx):
