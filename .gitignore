@@ -1,0 +1,13 @@
+.DS_Store
+.vscode
+
+*.ipynb*
+*/*.pyc
+*/**/*.pyc
+*/__pycache__
+*/**/__pycache__
+
+checkpoints
+datasets
+lightning_logs
+logs
