@@ -18,17 +18,18 @@ class MnistVAE(pl.LightningModule):
         hparams: training/test hyperparameters
     """
     super().__init__()
+    # Anything assigned to self.hparams will be saved automatically
     self.hparams = hparams
-    self.model = init_weights(SimpleBetaVAE(z_dim=hparams.z_dim))
+    self.model = init_weights(SimpleBetaVAE(hparams))
     self.eps = torch.finfo(torch.float).eps
 
   def forward(self, x):
     output = self.model(x)
     return output
 
-  def loss_function(self, x_tilde, x, mu, logvar):
+  def loss_function(self, x_tilde, x, mean, logvar):
     BCE = nn.functional.binary_cross_entropy(x_tilde, x, reduction='sum')
-    KLD = self.hparams.beta * torch.sum(logvar.exp() - logvar - 1 + mu.pow(2))
+    KLD = self.hparams.beta * torch.sum(logvar.exp() - logvar - 1 + mean.pow(2))
     return BCE + KLD
 
   def configure_optimizers(self):
@@ -39,13 +40,15 @@ class MnistVAE(pl.LightningModule):
   def training_step(self, batch, batch_idx):
     x, _ = batch
     output = self.model(x)
-    loss = self.loss_function(output['x_tilde'], x, output['mu'], output['logvar'])
+    loss = self.loss_function(
+        output['x_tilde'], x, output['z_mean'], output['z_logvar'])
     return {'loss': loss}
 
   def validation_step(self, batch, batch_idx):
     x, _ = batch
     output = self.model(x)
-    loss = self.loss_function(output['x_tilde'], x, output['mu'], output['logvar'])
+    loss = self.loss_function(
+        output['x_tilde'], x, output['z_mean'], output['z_logvar'])
     return {'val_loss': loss}
 
   def validation_epoch_end(self, val_step_outputs):

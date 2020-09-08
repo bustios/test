@@ -202,11 +202,11 @@ class AttentionNetwork(nn.Module):
 
 class SimpleBetaVAE(nn.Module):
 
-  def __init__(self, in_channels=1, out_channels=1, z_dim=16):
+  def __init__(self, hparams):
     super().__init__()
-    self._z_dim = z_dim
+    self._z_dim = hparams.z_dim
     self.encoder = nn.Sequential(
-      nn.Conv2d(in_channels, 32, 3, 1, padding=1),
+      nn.Conv2d(hparams.in_channels, 32, 3, 1, padding=1),
       nn.ReLU(True),
       nn.MaxPool2d(2),
       nn.Conv2d(32, 64, 3, 1, padding=1),
@@ -214,29 +214,47 @@ class SimpleBetaVAE(nn.Module):
       nn.MaxPool2d(2),
       nn.Flatten(),
       nn.Dropout(0.5),
-      nn.Linear(7 * 7 * 64, z_dim * 2),
+      nn.Linear(7 * 7 * 64, self._z_dim * 2),
       nn.ReLU(True),
-      nn.Linear(z_dim * 2, z_dim * 2)
+      nn.Linear(self._z_dim * 2, self._z_dim * 2)
     )
-
-    self.decoder = nn.Sequential(
-      nn.Conv2d(z_dim + 2, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, in_channels, 1),
-      nn.Sigmoid()
-    )
+    self.decoder = SpatialBroadcastDecoder(hparams)
 
   @staticmethod
   def reparameterize(mu, logvar):
     std = torch.exp(0.5 * logvar)
     eps = torch.randn_like(mu)
     return mu + eps * std
+
+  def forward(self, x):
+    mean_logvar = self.encoder(x)
+    z_mean = mean_logvar[:, :self._z_dim]
+    z_logvar = mean_logvar[:, self._z_dim:]
+    z = self.reparameterize(z_mean, z_logvar) if self.training else z_mean
+    x_tilde = self.decoder(z)
+
+    output = dict(x_tilde=x_tilde, z_mean=z, z_logvar=z_logvar)
+    return output
+
+
+class SpatialBroadcastDecoder(nn.Module):
+
+  def __init__(self, hparams):
+    super().__init__()
+    self._height = hparams.height
+    self._width = hparams.width
+    self.decoder = nn.Sequential(
+      nn.Conv2d(hparams.z_dim + 2, 32, 3),
+      nn.ReLU(True),
+      nn.Conv2d(32, 32, 3),
+      nn.ReLU(True),
+      nn.Conv2d(32, 32, 3),
+      nn.ReLU(True),
+      nn.Conv2d(32, 32, 3),
+      nn.ReLU(True),
+      nn.Conv2d(32, hparams.out_channels, 1),
+      nn.Sigmoid()
+    )
 
   @staticmethod
   def spatial_broadcast(z, h, w):
@@ -251,19 +269,16 @@ class SimpleBetaVAE(nn.Module):
     # Expand from (h, w) -> (n, 1, h, w)
     x_b = x_b.expand(n, 1, -1, -1)
     y_b = y_b.expand(n, 1, -1, -1)
-    # Concatenate along the channel dimension: final shape = (n, z_dim + 2, h, w)
+    # Concatenate along the channel dimension, shape = (n, z_dim + 2, h, w)
     z_sb = torch.cat((z_b, x_b, y_b), dim=1)
     return z_sb
 
-  def forward(self, x):
-    mu_logvar = self.encoder(x)
-    z_mu = mu_logvar[:, :self._z_dim]
-    z_logvar = mu_logvar[:, self._z_dim:]
-    z = self.reparameterize(z_mu, z_logvar) if self.training else z_mu
-
-    h, w = x.shape[-2:]
+  def forward(self, z, h=None, w=None):
+    if h is None:
+      h = self._height
+    if w is None:
+      w = self._width
+    
     z_sb = self.spatial_broadcast(z, h + 8, w + 8)
     x_tilde = self.decoder(z_sb)
-
-    output = dict(x_tilde=x_tilde, mu=z, logvar=z_logvar)
-    return output
+    return x_tilde
