@@ -35,10 +35,11 @@ if __name__ == '__main__':
 
   since = time.time()
   trainer.fit(model, datamodule=dataloader)
-  time_elapsed = time.time() - since
-  h = time_elapsed // 3600
-  m = (time_elapsed // 60) % 60
-  s = time_elapsed % 60
-  print(f'Training complete in {h:.0f}h {m:.0f}m {s:.0f}s')
-  
-  torch.save(model.state_dict(), args.model_path)
+
+  if not args.fast_dev_run:
+    time_elapsed = time.time() - since
+    h = time_elapsed // 3600
+    m = (time_elapsed // 60) % 60
+    s = time_elapsed % 60
+    print(f'Training complete in {h:.0f}h {m:.0f}m {s:.0f}s')
+    torch.save(model.state_dict(), args.model_path)
