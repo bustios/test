@@ -274,11 +274,11 @@ class SpatialBroadcastDecoder(nn.Module):
     return z_sb
 
   def forward(self, z, h=None, w=None):
-    # if h is None:
-    #   h = self._height
-    # if w is None:
-    #   w = self._width
+    if h is None:
+      h = self._height
+    if w is None:
+      w = self._width
     
-    z_sb = self.spatial_broadcast(z, self._height + 8, self._width + 8)
+    z_sb = self.spatial_broadcast(z, h + 8, w + 8)
     x_tilde = self.decoder(z_sb)
     return x_tilde
