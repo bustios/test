@@ -206,14 +206,11 @@ class SimpleBetaVAE(nn.Module):
     super().__init__()
     self._z_dim = hparams.z_dim
     self.encoder = nn.Sequential(
-      nn.Conv2d(hparams.in_channels, 32, 3, 1, padding=1),
+      nn.Conv2d(hparams.in_channels, 32, 3, 2, padding=1),
       nn.ReLU(True),
-      nn.MaxPool2d(2),
-      nn.Conv2d(32, 64, 3, 1, padding=1),
+      nn.Conv2d(32, 64, 3, 2, padding=1),
       nn.ReLU(True),
-      nn.MaxPool2d(2),
       nn.Flatten(),
-      nn.Dropout(0.5),
       nn.Linear(7 * 7 * 64, self._z_dim * 2),
       nn.ReLU(True),
       nn.Linear(self._z_dim * 2, self._z_dim * 2)
