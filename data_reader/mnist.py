@@ -1,13 +1,13 @@
-import pytorch_lightning as pl
+from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import MNIST
 
-class MnistDataModule(pl.LightningDataModule):
+class MnistDataModule(LightningDataModule):
 
   def __init__(self, hparams):
     super().__init__()
-    self.dataset_path = hparams.dataset_path
+    self.dataset_path = hparams.dataset_dir
     self.kwargs = {'batch_size': hparams.batch_size, 
                    'num_workers': hparams.num_workers, 
                    'pin_memory': True}

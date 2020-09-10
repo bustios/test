@@ -206,9 +206,13 @@ class SimpleBetaVAE(nn.Module):
     super().__init__()
     self._z_dim = hparams.z_dim
     self.encoder = nn.Sequential(
-      nn.Conv2d(hparams.in_channels, 32, 3, 2, padding=1),
+      nn.Conv2d(hparams.input_channels, 32, 3, stride=2, padding=1),
       nn.ReLU(True),
-      nn.Conv2d(32, 64, 3, 2, padding=1),
+      nn.Conv2d(32, 32, 3, stride=1, padding=1),
+      nn.ReLU(True),
+      nn.Conv2d(32, 64, 3, stride=2, padding=1),
+      nn.ReLU(True),
+      nn.Conv2d(64, 64, 3, stride=1, padding=1),
       nn.ReLU(True),
       nn.Flatten(),
       nn.Linear(7 * 7 * 64, self._z_dim * 2),
@@ -238,8 +242,8 @@ class SpatialBroadcastDecoder(nn.Module):
 
   def __init__(self, hparams):
     super().__init__()
-    self._height = hparams.height
-    self._width = hparams.width
+    self._height = hparams.input_height
+    self._width = hparams.input_width
     self.decoder = nn.Sequential(
       nn.Conv2d(hparams.z_dim + 2, 32, 3),
       nn.ReLU(True),
@@ -249,7 +253,7 @@ class SpatialBroadcastDecoder(nn.Module):
       nn.ReLU(True),
       nn.Conv2d(32, 32, 3),
       nn.ReLU(True),
-      nn.Conv2d(32, hparams.out_channels, 1),
+      nn.Conv2d(32, hparams.output_channels, 1),
       nn.Sigmoid()
     )
 
