@@ -6,7 +6,7 @@ def main():
   from argparse import ArgumentParser
   from pytorch_lightning.callbacks import ModelCheckpoint
 
-  from models.mnist_vae import MnistVAE
+  from models.beta_vae import BetaVAE
   from data_reader.mnist import MnistDataModule
 
 
@@ -16,15 +16,14 @@ def main():
 
   parser = ArgumentParser()
   parser = pl.Trainer.add_argparse_args(parser)
-  # parser.add_argument('--model_path', 
-  #     default='/content/drive/My Drive/models/mnist_vae.pt', type=str)
   parser.add_argument('--output_dir', default='./logs', type=str)
   parser.add_argument('--dataset_dir', default='./datasets', type=str)
   parser.add_argument('--num_workers', default=4, type=int)
 
-  parser.add_argument('--batch_size', default=64, type=int)
+  parser.add_argument('--batch_size', default=32, type=int)
   parser.add_argument('--learning_rate', default=1e-3, type=float)
-
+  
+  parser.add_argument('--image_type', default=0, type=int)
   parser.add_argument('--input_channels', default=1, type=int)
   parser.add_argument('--input_height', default=28, type=int)
   parser.add_argument('--input_width', default=28, type=int)
@@ -35,7 +34,7 @@ def main():
   args = parser.parse_args()
 
   dataloader = MnistDataModule(hparams=args)
-  model = MnistVAE(hparams=args)
+  model = BetaVAE(hparams=args)
 
   checkpoint_callback = ModelCheckpoint(
       save_top_k=1,
@@ -47,7 +46,7 @@ def main():
   trainer = pl.Trainer.from_argparse_args(
       args,
       checkpoint_callback=checkpoint_callback,
-      progress_bar_refresh_rate=20
+      progress_bar_refresh_rate=50
   )
 
   since = time.time()
@@ -59,9 +58,8 @@ def main():
     m = (time_elapsed // 60) % 60
     s = time_elapsed % 60
     print(f'Training complete in {h:.0f}h {m:.0f}m {s:.0f}s')
-    # torch.save(model.state_dict(), args.model_path)
 
-  print(f'Best model score: {checkpoint_callback.best_model_score:.4f}')
+  print(f'Best val. score: {checkpoint_callback.best_model_score:.4f}')
 
 
 if __name__ == '__main__':
