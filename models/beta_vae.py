@@ -64,22 +64,38 @@ class BetaVAE(pl.LightningModule):
 
     x = x.view(-1, 1, self.hparams.input_height, self.hparams.input_width)
     y = y.view(-1)
-    tensorboard = self.logger.experiment
-    tensorboard.add_embedding(model_output['z_mean'], y, x)
 
+    tensorboard = self.logger.experiment
+    tensorboard.add_embedding(model_output['z_mean'], y, x, global_step=self.current_epoch)
+    # 'codes': ,
+    #     'images': x,
+    #     'labels': y
     result = pl.EvalResult(loss, checkpoint_on=loss)
     result.log_dict({
         'val_elbo_loss': loss,
         'val_recon_loss': recon_loss,
-        'val_kl_div': kl_div,
-    }, on_step=True)
-
+        'val_kl_div': kl_div
+        
+    })#, on_step=True)
+    # log = {
+    #     'val_elbo_loss': loss,
+    #     'val_recon_loss': recon_loss,
+    #     'val_kl_div': kl_div,
+    #     'codes': model_output['z_mean'],
+    #     'images': x,
+    #     'labels': y
+    # }
+    # result = {'val_loss': loss, 'log': log}
     return result
 
   # def validation_epoch_end(self, val_step_outputs):
-  #   val_loss = torch.stack([x['val_loss'] for x in val_step_outputs]).mean()
-  #   log = {'avg_val_loss': val_loss}
-  #   return {'val_loss': val_loss, 'log': log}
+  #   loss = torch.stack([x['val_loss'] for x in val_step_outputs]).mean()
+  #   codes = torch.cat([x['log']['codes'] for x in val_step_outputs])
+  #   labels = torch.cat([x['log']['labels'] for x in val_step_outputs])
+  #   images = torch.cat([x['log']['images']for x in val_step_outputs])
+  #   tensorboard = self.logger.experiment
+  #   tensorboard.add_embedding(codes, labels, images, self.current_epoch)
+  #   return {'val_loss': loss}
 
   # def test_step(self, batch, batch_idx):
   #   x, y = batch
