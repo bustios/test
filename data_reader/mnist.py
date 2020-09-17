@@ -36,7 +36,7 @@ class MNISTDataset(Dataset):
     return torch.cat((x, x_)), torch.tensor((y, y))
 
 
-class MnistDataModule(LightningDataModule):
+class MNISTDataModule(LightningDataModule):
 
   def __init__(self, hparams):
     super().__init__()
