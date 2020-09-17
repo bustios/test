@@ -6,13 +6,14 @@ from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 class LoggerCallback(Callback):
 
   def on_validation_epoch_end(self, trainer, pl_module):
-    codes = torch.cat(pl_module.codes)
-    images = torch.cat(pl_module.images)
-    pl_module.logger.experiment.add_embedding(
-        codes, pl_module.labels, images, pl_module.current_epoch)
-    pl_module.codes.clear()
-    pl_module.labels.clear()
-    pl_module.images.clear()
+    if pl_module.current_epoch == trainer.max_epochs - 1:
+      codes = torch.cat(pl_module.codes)
+      images = torch.cat(pl_module.images)
+      pl_module.logger.experiment.add_embedding(
+          codes, pl_module.labels, images, pl_module.current_epoch)
+      pl_module.codes.clear()
+      pl_module.labels.clear()
+      pl_module.images.clear()
 
 
 def main():

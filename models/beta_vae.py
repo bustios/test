@@ -64,11 +64,11 @@ class BetaVAE(pl.LightningModule):
   def validation_step(self, batch, batch_idx):
     x, y = batch
     loss, recon_loss, kl_div, model_output = self.compute_loss(x)
-
-    x = x.view(-1, 1, self.hparams.input_height, self.hparams.input_width)
-    self.codes.append(model_output['z_mean'])
-    self.images.append(x)
-    self.labels.extend(y.view(-1).tolist())
+    if self.current_epoch == self.trainer.max_epochs - 1:
+      x = x.view(-1, 1, self.hparams.input_height, self.hparams.input_width)
+      self.codes.append(model_output['z_mean'])
+      self.labels.extend(y.view(-1).tolist())
+      self.images.append(x)
 
     result = pl.EvalResult(early_stop_on=loss, checkpoint_on=loss)
     result.log_dict({
