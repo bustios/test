@@ -17,8 +17,10 @@
 # from __future__ import absolute_import
 # from __future__ import division
 # from __future__ import print_function
+import itertools
 import numbers
 import os
+import shutil
 # from disentanglement_lib.data.ground_truth import named_data
 # from disentanglement_lib.utils import results
 # from disentanglement_lib.visualize import visualize_util
@@ -34,13 +36,14 @@ from scipy import stats
 # import gin.tf
 from . import visualize_util
 
+
+@torch.no_grad()
 def visualize(model,
               decoder,
               images,
               output_dir,
               latent_dims=16,
-              overwrite=False,
-              num_animations=5,
+              num_animations=10,
               num_frames=20,
               fps=10,
               num_points_irs=10000):
@@ -49,7 +52,6 @@ def visualize(model,
   Args:
     model_dir: Path to directory where the trained model is saved.
     output_dir: Path to output directory.
-    overwrite: Boolean indicating whether to overwrite output directory.
     num_animations: Integer with number of distinct animations to create.
     num_frames: Integer with number of frames in each animation.
     fps: Integer with frame rate for the animation.
@@ -57,56 +59,19 @@ def visualize(model,
   """
   # Fix the random seed for reproducibility.
   # random_state = np.random.RandomState(0)
-  torch.manual_seed(1)
-  torch.cuda.manual_seed(1)
-  # # Create the output directory if necessary.
-  # if tf.gfile.IsDirectory(output_dir):
-  #   if overwrite:
-  #     tf.gfile.DeleteRecursively(output_dir)
-  #   else:
-  #     raise ValueError("Directory already exists and overwrite is False.")
+  torch.manual_seed(0)
+  torch.cuda.manual_seed(0)
 
-  # # Automatically set the proper data set if necessary. We replace the active
-  # # gin config as this will lead to a valid gin config file where the data set
-  # # is present.
-  # # Obtain the dataset name from the gin config of the previous step.
-  # gin_config_file = os.path.join(model_dir, "results", "gin", "train.gin")
-  # gin_dict = results.gin_dict(gin_config_file)
-  # gin.bind_parameter("dataset.name", gin_dict["dataset.name"].replace(
-  #     "'", ""))
-
-  # # Automatically infer the activation function from gin config.
-  # activation_str = gin_dict["reconstruction_loss.activation"]
-  # if activation_str == "'logits'":
-  #   activation = sigmoid
-  # elif activation_str == "'tanh'":
-  #   activation = tanh
-  # else:
-  #   raise ValueError(
-  #       "Activation function  could not be infered from gin config.")
-
-  # dataset = named_data.get_named_ground_truth_data()
-  num_pics = 64
-  # module_path = os.path.join(model_dir, "tfhub")
-
-  # with hub.eval_function_for_module(module_path) as f:
-
-  # Save reconstructions.
-  # real_pics = dataset.sample_observations(num_pics, random_state)
-  # raw_pics = f(
-  #     dict(images=real_pics), signature="reconstructions",
-  #     as_dict=True)["images"]
-  # pics = activation(raw_pics)
-  # paired_pics = np.concatenate((real_pics, pics), axis=2)
-  # paired_pics = [paired_pics[i, :, :, :] for i in range(paired_pics.shape[0])]
-  # results_dir = os.path.join(output_dir, "reconstructions")
-  # if not gfile.IsDirectory(results_dir):
-  #   gfile.MakeDirs(results_dir)
-  # visualize_util.grid_save_images(
-  #     paired_pics, os.path.join(results_dir, "reconstructions.jpg"))
-
-  
-
+  for version in itertools.count(0):
+    subdir = "version_" + str(version).zfill(2)
+    save_path = os.path.join(output_dir, subdir)
+    try:
+      os.makedirs(save_path)
+      output_dir = save_path
+      break
+    except FileExistsError:
+      pass
+    
   model.eval()
   output = model(images)
 
@@ -124,35 +89,33 @@ def visualize(model,
   # Save samples.
   num_pics = images.shape[0]
   # random_codes = random_state.normal(0, 1, [num_pics, latent_dims])
-  random_codes = torch.randn_like(output['z_mean'])
+  random_codes = torch.randn_like(output["z_mean"])
   pics = decoder(random_codes)
   results_dir = os.path.join(output_dir, "sampled")
   os.makedirs(results_dir, exist_ok=True)
   torchvision.utils.save_image(pics, os.path.join(results_dir, 'samples.jpg'))
-  # visualize_util.grid_save_images(pics,
-  #     os.path.join(results_dir, "samples.jpg"))
 
   # Save latent traversals.
   # result = f(
   #     dict(images=dataset.sample_observations(num_pics, random_state)),
   #     signature="gaussian_encoder",
   #     as_dict=True)
-  means = result["z_mean"]
-  logvars = result["z_logvar"]
+  means = output["z_mean"]
+  logvars = output["z_logvar"]
   results_dir = os.path.join(output_dir, "traversals")
   os.makedirs(results_dir, exist_ok=True)
   
   for i, mean in enumerate(means):
     pics = latent_traversal_1d_multi_dim(decoder, mean)
     for dim, imgs in enumerate(pics):
-      file_name = os.path.join(results_dir, f"traversals_{i}_{dim}.jpg")
-      visualize_util.grid_save_images(imgs, file_name)
+      file_name = os.path.join(results_dir, f"traversals_{i}_dim_{dim}.jpg")
+      torchvision.utils.save_image(imgs, file_name)
 
   # Save the latent traversal animations.
   results_dir = os.path.join(output_dir, "animated_traversals")
   # if not gfile.IsDirectory(results_dir):
     # gfile.MakeDirs(results_dir)
-  os.makedirs(results_dir)
+  os.makedirs(results_dir, exist_ok=True)
 
   if num_animations > means.shape[0]:
     num_animations = means.shape[0]
@@ -191,7 +154,7 @@ def visualize(model,
     for j in range(base_code.shape[0]):
       # code = np.repeat(np.expand_dims(base_code, 0), num_frames, axis=0)
       code = base_code.repeat(num_frames, 1)
-      code[:, j] = torch.form_numpy(
+      code[:, j] = torch.from_numpy(
           visualize_util.cycle_interval(base_code[j].item(), num_frames, -2, 2))
       images.append(decoder(code))
     filename = os.path.join(results_dir, f"fixed_interval_cycle_{i}.gif")
@@ -321,11 +284,3 @@ def latent_traversal_1d_multi_dim(generator_fn,
   # axis = (0 if transpose else 1)
   # return np.concatenate(row_or_columns, axis)
   return row_or_columns
-
-
-# def sigmoid(x):
-#   return stats.logistic.cdf(x)
-
-
-# def tanh(x):
-#   return np.tanh(x) / 2. + .5

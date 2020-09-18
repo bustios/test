@@ -1,5 +1,9 @@
+import time
 import torch
-
+import pytorch_lightning as pl
+import args_parser
+from data_reader.mnist import MNISTDataModule
+from models.beta_vae import BetaVAE
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 
 
@@ -16,34 +20,10 @@ class LoggerCallback(Callback):
       pl_module.images.clear()
 
 
-def main():
-  import time
-  import pytorch_lightning as pl
-  from argparse import ArgumentParser
-
-  from models.beta_vae import BetaVAE
-  from data_reader.mnist import MNISTDataModule
-
-
+def train():
   pl.seed_everything(0)
-
-  parser = ArgumentParser()
+  parser = args_parser.get_parser()
   parser = pl.Trainer.add_argparse_args(parser)
-  parser.add_argument('--output_dir', default='./logs', type=str)
-  parser.add_argument('--dataset_dir', default='./datasets', type=str)
-  parser.add_argument('--num_workers', default=4, type=int)
-
-  parser.add_argument('--batch_size', default=32, type=int)
-  parser.add_argument('--learning_rate', default=1e-3, type=float)
-
-  parser.add_argument('--image_type', default=0, type=int)
-  parser.add_argument('--input_channels', default=1, type=int)
-  parser.add_argument('--input_height', default=28, type=int)
-  parser.add_argument('--input_width', default=28, type=int)
-  parser.add_argument('--output_channels', default=1, type=int)
-  parser.add_argument('--beta', default=0.5, type=float)
-  parser.add_argument('--z_dim', default=16, type=int)
-
   args = parser.parse_args()
 
   dataloader = MNISTDataModule(hparams=args)
@@ -78,4 +58,4 @@ def main():
 
 
 if __name__ == '__main__':
-  main()
+  train()

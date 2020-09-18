@@ -27,7 +27,6 @@ def init_weights(net, init_type='kaiming', init_gain=1.):
       else:
         raise NotImplementedError(f'Initialization method {init_type} is not implemented')
 
-  print(f'Initialize network with {init_type}')
   return net.apply(init_func)
 
 

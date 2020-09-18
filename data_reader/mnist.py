@@ -14,7 +14,7 @@ class MNISTDataset(Dataset):
     self.mnist = MNIST(path, train, download=download)
     self.image_type = image_type
     self.transform = transforms.ToTensor() if transform is None else transform
-    self.scales = np.arange(0.6, 2., 0.1)
+    self.scales = np.arange(0.6, 1.6, 0.1)
 
   def __len__(self):
     return len(self.mnist)

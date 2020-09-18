@@ -17,16 +17,18 @@
 import imageio
 import numpy as np
 import scipy.stats
+import torch
 import torchvision
 
-
+@torch.no_grad()
 def save_animation(list_of_animated_images, image_path, fps):
   full_size_images = []
   for single_images in zip(*list_of_animated_images):
-    full_size_images.append(
-        torchvision.utils.make_grid(list(single_images),
-                                    normalize=True,
-                                    pad_value=1.)
+    image_grid = torchvision.utils.make_grid(list(single_images), pad_value=1)
+    image_grid = image_grid.permute(1, 2, 0).numpy()
+    image_grid *= 255.
+    image_grid = image_grid.astype("uint8")
+    full_size_images.append(image_grid)
   imageio.mimwrite(image_path, full_size_images, fps=fps)
 
 
