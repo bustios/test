@@ -1,6 +1,6 @@
-"""C. P. Burgess et al., "MONet: Unsupervised Scene Decomposition and 
-Representation," pp. 1–22, 2019."""
-
+import argparse
+import itertools
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from torch import optim
@@ -8,47 +8,71 @@ from torch import optim
 from .architectures import AttentionNetwork, ComponentVAE, init_net
 
 
-class MONet(nn.Module):
+class MONet(pl.LightningModule):
 
-  def __init__(self, opt):
+  def __init__(self, hparams):
     """Initialize this model class.
 
     Parameters:
-        opt: training/test options
-
-    A few things can be done here.
-    - (required) call the initialization function of BaseModel
-    - define loss function, visualization images, model names, and optimizers
+        hparams: training/test hyperparameters
     """
     super().__init__()
-    self.opt = opt
-    self.attention_net = init_net(AttentionNetwork())
-    self.comp_vae = init_net(ComponentVAE())
-
+    if isinstance(hparams, dict):
+      hparams = argparse.Namespace(**hparams)
+    # Anything assigned to self.hparams will be saved automatically
+    self.hparams = hparams
+    self.attention_net = AttentionNetwork(hparams)
+    self.comp_vae = ComponentVAE(hparams)
     self.eps = torch.finfo(torch.float).eps
-    self.criterionKL = nn.KLDivLoss(reduction='batchmean')
+    # self.codes = []
+    # self.images = []
+    # self.labels = []
 
-  def forward(self, x):
-    """Run forward pass. This will be called by both functions 
-    <optimize_parameters> and <test>."""
-    self.x = x
-    self.loss_E = 0
-    x_tilde = 0
-    nll = []
-    m = []
+  def init_parameters(self):
+    self.attention_net = init_net(self.attention_net)
+    self.comp_vae = init_net(self.comp_vae)
+
+  def configure_optimizers(self):
+    parameters = itertools.chain(
+        self.attention_net.parameters(), 
+        self.comp_vae.parameters()
+    )
+    optimizer = torch.optim.RMSprop(parameters, lr=self.hparams.learning_rate)
+    return optimizer
+
+  # def encode(self, x):
+  #   shape = list(x.shape)
+  #   shape[1] = 1
+  #   if log_s_k is None:
+  #     log_s_k = x.new_zeros(shape)
+    
+  #   # Derive mask from current scope
+  #   if k != self.hparams.num_slots - 1:
+  #     log_alpha_k = self.attention_net(x, log_s_k)
+  #     log_m_k = log_s_k + log_alpha_k
+  #     # Compute next scope
+  #     log_s_k += (1. - log_alpha_k.exp()).clamp(min=self.eps).log()
+  #   else:
+  #     log_m_k = log_s_k
+
+  def compute_losses(self, x):
+    encoder_loss = 0
+    decoder_loss = []
+    masks = []
     m_tilde_logits = []
     x_mu = []
     x_masked = []
+    x_tilde = 0
 
     # Initial s_k = 1: shape = (N, 1, H, W)
-    shape = list(self.x.shape)
+    shape = list(x.shape)
     shape[1] = 1
-    log_s_k = self.x.new_zeros(shape)
+    log_s_k = x.new_zeros(shape)
 
-    for k in range(self.opt.num_slots):
+    for k in range(self.hparams.num_slots):
       # Derive mask from current scope
-      if k != self.opt.num_slots - 1:
-        log_alpha_k = self.attention_net(self.x, log_s_k)
+      if k != self.hparams.num_slots - 1:
+        log_alpha_k = self.attention_net(x, log_s_k)
         log_m_k = log_s_k + log_alpha_k
         # Compute next scope
         log_s_k += (1. - log_alpha_k.exp()).clamp(min=self.eps).log()
@@ -59,44 +83,68 @@ class MONet(nn.Module):
       m_tilde_k_logits, x_mu_k, x_logvar_k, z_mu_k, z_logvar_k = self.comp_vae(x, log_m_k, k == 0)
 
       # KLD is additive for independent distributions
-      self.loss_E += -0.5 * (1 + z_logvar_k - z_mu_k.pow(2) - z_logvar_k.exp()).sum()
-
-      m_k = log_m_k.exp()
-      x_k_masked = m_k * x_mu_k
+      encoder_loss += self.compute_kl_div(z_mu_k, z_logvar_k)
 
       # Exponents for the decoder loss
-      nll_k = log_m_k - 0.5 * x_logvar_k - (self.x - x_mu_k).pow(2) / (2 * x_logvar_k.exp())
-      nll.append(nll_k.unsqueeze(1))
+      loss_k = self.compute_reconstruction_loss(x, x_mu_k, x_logvar_k, log_m_k)
+      decoder_loss.append(loss_k.unsqueeze(1))
 
-      # Get outputs for kth step
-      # setattr(self, 'm{}'.format(k), m_k * 2. - 1.) # shift mask from [0, 1] to [-1, 1]
-      # setattr(self, 'x{}'.format(k), x_mu_k)
-      # setattr(self, 'xm{}'.format(k), x_k_masked)
-
-      # Iteratively reconstruct the output image
-      x_tilde += x_k_masked
+      mask_k = log_m_k.exp()
+      x_k_masked = mask_k * x_mu_k
+      # # Iteratively reconstruct the output image
+      # x_tilde += x_k_masked
       # Accumulate
-      m.append(m_k)
+      masks.append(mask_k)
       m_tilde_logits.append(m_tilde_k_logits)
 
-      x_mu.append(x_mu_k.unsqueeze(1))
-      x_masked.append(x_k_masked.unsqueeze(1))
+      # x_mu.append(x_mu_k.unsqueeze(1))
+      # x_masked.append(x_k_masked.unsqueeze(1))
 
-    self.m = torch.cat(m, dim=1)
-    self.m_tilde_logits = torch.cat(m_tilde_logits, dim=1)
-    self.nll = torch.cat(nll, dim=1)
+    decoder_loss = torch.cat(decoder_loss, dim=1)
+    masks = torch.cat(masks, dim=1)
+    m_tilde_logits = torch.cat(m_tilde_logits, dim=1)
+    
+    # m_tilde = m_tilde_logits.softmax(dim=1)
+    # x_mu = torch.cat(x_mu, dim=1)
+    # x_masked = torch.cat(x_masked, dim=1)
 
-    m_tilde = self.m_tilde_logits.softmax(dim=1)
-    x_mu = torch.cat(x_mu, dim=1)
-    x_masked = torch.cat(x_masked, dim=1)
-    return self.m, m_tilde, x_mu, x_masked, x_tilde
+    # return masks, m_tilde, x_mu, x_masked, x_tilde
 
-  def backward(self):
-    """Calculate losses, gradients, and update network weights; called in every
-    training iteration"""
-    n = self.x.size(0)
-    self.loss_E /= n
-    self.loss_D = -torch.logsumexp(self.nll, dim=1).sum() / n
-    self.loss_mask = self.criterionKL(self.m_tilde_logits.log_softmax(dim=1), self.m)
-    loss = self.loss_D + self.opt.beta * self.loss_E + self.opt.gamma * self.loss_mask
-    loss.backward()
+    n = x.shape[0]
+    encoder_loss /= n
+    decoder_loss = -torch.logsumexp(decoder_loss, dim=1).sum() / n
+    mask_loss = nn.functional.kl_div(m_tilde_logits.log_softmax(dim=1), masks, 
+                                     reduction='batchmean')
+    total_loss = self.hparams.beta * encoder_loss + decoder_loss \
+                 + self.hparams.gamma * mask_loss
+
+    return total_loss, encoder_loss, decoder_loss, mask_loss
+
+  def compute_reconstruction_loss(self, x, x_mu, x_logvar, log_mask):
+    loss = log_mask - 0.5 * x_logvar - (x - x_mu).pow(2) / (2 * x_logvar.exp())
+    return loss
+
+  def compute_kl_div(self, z_mean, z_logvar):
+    kl_div = torch.sum(z_logvar.exp() - z_logvar - 1 + z_mean.pow(2))
+    return kl_div
+
+  def training_step(self, batch, batch_idx):
+    x = batch
+    total_loss, encoder_loss, decoder_loss, mask_loss = self.compute_losses(x)
+    self.log_dict({
+        'train_loss': total_loss,
+        'train_encoder_loss': encoder_loss,
+        'train_decoder_loss': decoder_loss,
+        'train_mask_loss': mask_loss
+    })
+    return total_loss
+
+  # def validation_step(self, batch, batch_idx):
+  #   x, y = batch
+  #   total_loss, encoder_loss, decoder_loss, mask_loss = self.compute_losses(x)
+    # if self.current_epoch == self.trainer.max_epochs - 1:
+    #   x = x.view(-1, 1, self.hparams.input_height, self.hparams.input_width)
+    #   self.codes.append(model_output['z_mean'])
+    #   self.labels.extend(y.view(-1).tolist())
+    #   self.images.append(x)
+    # return total_loss

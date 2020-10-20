@@ -10,8 +10,9 @@ import torchvision.transforms.functional as TF
 
 class MNISTDataset(Dataset):
 
-  def __init__(self, path, train, image_type, transform=None, download=True):
-    self.mnist = MNIST(path, train, download=download)
+  def __init__(self, dataset_dir, train, image_type, transform=None, 
+      download=True):
+    self.mnist = MNIST(dataset_dir, train, download=download)
     self.image_type = image_type
     self.transform = transforms.ToTensor() if transform is None else transform
     self.scales = np.arange(0.6, 1.6, 0.1)
@@ -40,7 +41,7 @@ class MNISTDataModule(LightningDataModule):
 
   def __init__(self, hparams):
     super().__init__()
-    self.dataset_path = hparams.dataset_dir
+    self.dataset_dir = hparams.dataset_dir
     self.image_type = hparams.image_type
     self.kwargs = {'batch_size': hparams.batch_size, 
                    'num_workers': hparams.num_workers, 
@@ -50,14 +51,14 @@ class MNISTDataModule(LightningDataModule):
     # called only on 1 GPU
     transform = transforms.Compose([transforms.ToTensor()])
     self.train_mnist = MNISTDataset(
-        self.dataset_path, 
+        self.dataset_dir, 
         train=True, 
         image_type=self.image_type, 
         transform=transform, 
         download=True
     )
     self.val_mnist = MNISTDataset(
-        self.dataset_path, 
+        self.dataset_dir, 
         train=False, 
         image_type=self.image_type,
         transform=transform,

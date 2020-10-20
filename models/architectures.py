@@ -2,10 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn import init
 
-
-def init_weights(net, init_type='kaiming', init_gain=1.):
+def init_net(net, init_type='kaiming', init_gain=1.):
   """Initialize network weights.
 
   Args:
@@ -17,43 +15,35 @@ def init_weights(net, init_type='kaiming', init_gain=1.):
   def init_func(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
       if init_type == 'normal':
-        init.normal_(m.weight, mean=0., std=1.)
+        nn.init.normal_(m.weight, mean=0., std=1.)
       elif init_type == 'kaiming':
-        init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+        nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
       elif init_type == 'xavier':
-        init.xavier_normal_(m.weight.data, gain=init_gain)
+        nn.init.xavier_normal_(m.weight, gain=init_gain)
       elif init_type == 'orthogonal':
-        init.orthogonal_(m.weight, gain=init_gain)
+        nn.init.orthogonal_(m.weight, gain=init_gain)
       else:
-        raise NotImplementedError(f'Initialization method {init_type} is not implemented')
+        raise NotImplementedError(f'Initialization method [{init_type}] is not implemented')
 
+  print(f'Initialize network with {init_type}')
   return net.apply(init_func)
 
 
-class ComponentVAE(nn.Module):
+def compute_output_size(input_size, kernel_size, padding, stride, n_layers=1):
+    output_size = input_size
+    for _ in range(n_layers):
+      output_size = 1 + (output_size - kernel_size + 2 * padding) // stride
+    return output_size
 
-  def __init__(self, in_channels=3, z_dim=16, full_res=False):
+
+class SpatialBroadcastDecoder(nn.Module):
+
+  def __init__(self, hparams):
     super().__init__()
-    self._in_channels = in_channels
-    self._z_dim = z_dim
-    # full res: 128x128, low res: 64x64
-    h_dim = 4096 if full_res else 1024
-    self.encoder = nn.Sequential(
-      nn.Conv2d(in_channels + 1, 32, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 64, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(64, 64, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Flatten(),
-      nn.Linear(h_dim, 256),
-      nn.ReLU(True),
-      nn.Linear(256, 32)
-    )
+    self._height = hparams.input_height
+    self._width = hparams.input_width
     self.decoder = nn.Sequential(
-      nn.Conv2d(z_dim + 2, 32, 3),
+      nn.Conv2d(hparams.z_dim + 2, 32, 3),
       nn.ReLU(True),
       nn.Conv2d(32, 32, 3),
       nn.ReLU(True),
@@ -61,16 +51,8 @@ class ComponentVAE(nn.Module):
       nn.ReLU(True),
       nn.Conv2d(32, 32, 3),
       nn.ReLU(True),
-      nn.Conv2d(32, in_channels + 1, 1),
+      nn.Conv2d(32, hparams.comp_vae_out_channels, 1)
     )
-    self._bg_logvar = 2 * torch.tensor(0.09).log()
-    self._fg_logvar = 2 * torch.tensor(0.11).log()
-
-  @staticmethod
-  def reparameterize(mu, logvar):
-    std = torch.exp(0.5 * logvar)
-    eps = torch.randn_like(mu)
-    return mu + eps * std
 
   @staticmethod
   def spatial_broadcast(z, h, w):
@@ -85,9 +67,57 @@ class ComponentVAE(nn.Module):
     # Expand from (h, w) -> (n, 1, h, w)
     x_b = x_b.expand(n, 1, -1, -1)
     y_b = y_b.expand(n, 1, -1, -1)
-    # Concatenate along the channel dimension: final shape = (n, z_dim + 2, h, w)
+    # Concatenate along the channel dimension, shape = (n, z_dim + 2, h, w)
     z_sb = torch.cat((z_b, x_b, y_b), dim=1)
     return z_sb
+
+  def forward(self, z, h=None, w=None):
+    if h is None:
+      h = self._height
+    if w is None:
+      w = self._width
+    
+    z_sb = self.spatial_broadcast(z, h + 8, w + 8)
+    output = self.decoder(z_sb)
+    return output
+
+
+class ComponentVAE(nn.Module):
+
+  def __init__(self, hparams):
+    super().__init__()
+    height = compute_output_size(hparams.input_height, 3, 1, 2, 4)
+    self._in_channels = hparams.input_channels
+    self._z_dim = hparams.z_dim
+    self.encoder = nn.Sequential(
+      nn.Conv2d(self._in_channels + 1, 32, 3, stride=2, padding=1),
+      nn.ReLU(True),
+      nn.Conv2d(32, 32, 3, stride=2, padding=1),
+      nn.ReLU(True),
+      nn.Conv2d(32, 64, 3, stride=2, padding=1),
+      nn.ReLU(True),
+      nn.Conv2d(64, 64, 3, stride=2, padding=1),
+      nn.ReLU(True),
+      nn.Flatten(),
+      nn.Linear(height * height * 64, 256),
+      nn.ReLU(True),
+      nn.Linear(256, self._z_dim * 2)
+    )
+    self.decoder = SpatialBroadcastDecoder(hparams)
+    self._bg_logvar = 2 * torch.tensor(hparams.background_std).log()
+    self._fg_logvar = 2 * torch.tensor(hparams.foreground_std).log()
+
+  @staticmethod
+  def reparameterize(mu, logvar):
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(mu)
+    return mu + eps * std
+
+  def encode(self, x, log_m_k):
+    mu_logvar = self.encoder(torch.cat((x, log_m_k), dim=1))
+    z_mu = mu_logvar[:, :self._z_dim]
+    z_logvar = mu_logvar[:, self._z_dim:]
+    return z_mu, z_logvar
 
   def forward(self, x, log_m_k, background=False):
     """
@@ -95,18 +125,10 @@ class ComponentVAE(nn.Module):
     :param log_m_k: Attention mask logits
     :return: x_k and reconstructed mask logits
     """
-    mu_logvar = self.encoder(torch.cat((x, log_m_k), dim=1))
-    z_mu = mu_logvar[:, :self._z_dim]
-    z_logvar = mu_logvar[:, self._z_dim:]
+    z_mu, z_logvar = self.encode(x, log_m_k)
     z = self.reparameterize(z_mu, z_logvar) if self.training else z_mu
 
-    # The height and width of the input to this CNN were both 8 larger than the
-    # target output (i.e. image) size to arrive at the target size (i.e. 
-    # accommodating for the lack of padding).
-    h, w = x.shape[-2:]
-    z_sb = self.spatial_broadcast(z, h + 8, w + 8)
-
-    output = self.decoder(z_sb)
+    output = self.decoder(z)
     x_mu = output[:, :self._in_channels]
     x_logvar = self._bg_logvar if background else self._fg_logvar
     m_logits = output[:, self._in_channels:]
@@ -137,28 +159,21 @@ class AttentionBlock(nn.Module):
 class AttentionNetwork(nn.Module):
   """Unet-based network."""
 
-  def __init__(self, in_channels=3, out_channels=1, n_filters=64):
-    """Construct a Unet generator
-
-    Parameters:
-      in_channels (int): the number of channels in input images
-      out_channels (int): the number of channels in output images
-      n_filters (int): the number of filters in the first and last conv layers
-    """
+  def __init__(self, hparams, n_filters=64):
     super().__init__()
-    self.downblock1 = AttentionBlock(in_channels + 1, n_filters)
+    self.downblock1 = AttentionBlock(hparams.input_channels + 1, n_filters)
     self.downblock2 = AttentionBlock(n_filters, n_filters * 2)
     self.downblock3 = AttentionBlock(n_filters * 2, n_filters * 4)
     self.downblock4 = AttentionBlock(n_filters * 4, n_filters * 8)
     self.downblock5 = AttentionBlock(n_filters * 8, n_filters * 8, resize=False)
     # self.downblock6 = AttentionBlock(n_filters * 8, n_filters * 8, resize=False)
-
+    height = compute_output_size(hparams.input_height, 3, 1, 2, 4)
     self.mlp = nn.Sequential(
-      nn.Linear(4 * 4 * n_filters * 8, 128),
+      nn.Linear(height * height * n_filters * 8, 128),
       nn.ReLU(inplace=True),
       nn.Linear(128, 128),
       nn.ReLU(inplace=True),
-      nn.Linear(128, 4 * 4 * n_filters * 8),
+      nn.Linear(128, height * height * n_filters * 8),
       nn.ReLU(inplace=True)
     )
 
@@ -169,7 +184,7 @@ class AttentionNetwork(nn.Module):
     self.upblock5 = AttentionBlock(2 * n_filters * 2, n_filters)
     self.upblock6 = AttentionBlock(2 * n_filters, n_filters, resize=False)
 
-    self.output = nn.Conv2d(n_filters, out_channels, 1)
+    self.output = nn.Conv2d(n_filters, hparams.attention_out_channels, 1)
 
   def forward(self, x, log_s_k):
     # Downsampling blocks
@@ -179,7 +194,8 @@ class AttentionNetwork(nn.Module):
     x, skip4 = self.downblock4(x)
     x, skip5 = self.downblock5(x)
     skip6 = skip5
-    # The input to the MLP is the last skip tensor collected from the downsampling path (after flattening)
+    # The input to the MLP is the last skip tensor collected from the
+    # downsampling path (after flattening)
     # _, skip6 = self.downblock6(x)
     # Flatten
     x = skip6.flatten(start_dim=1)
@@ -235,50 +251,3 @@ class SimpleBetaVAE(nn.Module):
 
     output = dict(x_tilde=x_tilde, z_mean=z, z_logvar=z_logvar)
     return output
-
-
-class SpatialBroadcastDecoder(nn.Module):
-
-  def __init__(self, hparams):
-    super().__init__()
-    self._height = hparams.input_height
-    self._width = hparams.input_width
-    self.decoder = nn.Sequential(
-      nn.Conv2d(hparams.z_dim + 2, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, hparams.output_channels, 1),
-      nn.Sigmoid()
-    )
-
-  @staticmethod
-  def spatial_broadcast(z, h, w):
-    # Batch size
-    n = z.shape[0]
-    # Expand spatially: (n, z_dim) -> (n, z_dim, h, w)
-    z_b = z.view(n, -1, 1, 1).expand(-1, -1, h, w)
-    # Coordinate axes:
-    x = torch.linspace(-1, 1, w, device=z.device)
-    y = torch.linspace(-1, 1, h, device=z.device)
-    x_b, y_b = torch.meshgrid(x, y)
-    # Expand from (h, w) -> (n, 1, h, w)
-    x_b = x_b.expand(n, 1, -1, -1)
-    y_b = y_b.expand(n, 1, -1, -1)
-    # Concatenate along the channel dimension, shape = (n, z_dim + 2, h, w)
-    z_sb = torch.cat((z_b, x_b, y_b), dim=1)
-    return z_sb
-
-  def forward(self, z, h=None, w=None):
-    if h is None:
-      h = self._height
-    if w is None:
-      w = self._width
-    
-    z_sb = self.spatial_broadcast(z, h + 8, w + 8)
-    x_tilde = self.decoder(z_sb)
-    return x_tilde
