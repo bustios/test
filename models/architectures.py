@@ -3,19 +3,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def init_net(net, init_type='kaiming', init_gain=1.):
+def init_net(net, init_type='trunc_normal', init_gain=0.02):
   """Initialize network weights.
 
   Args:
-      net (network): network to be initialized
-      init_type (str): the name of an initialization method: normal | xavier | kaiming | orthogonal
+      net (network): network to be initialized.
+      init_type (str): the name of an initialization method: trunc_normal | 
+          normal | kaiming | xavier | orthogonal.
       init_gain (float): scaling factor for normal, xavier and orthogonal.
   """
   @torch.no_grad()
   def init_func(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-      if init_type == 'normal':
-        nn.init.normal_(m.weight, mean=0., std=1.)
+      if m.bias is not None:
+        nn.init.constant_(m.bias, 0)
+      if init_type == 'trunc_normal':
+        nn.init.trunc_normal_(m.weight, mean=0., std=init_gain, a=-.1, b=.1)
+      elif init_type == 'normal':
+        nn.init.normal_(m.weight, mean=0., std=init_gain)
       elif init_type == 'kaiming':
         nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
       elif init_type == 'xavier':
@@ -43,41 +48,37 @@ class SpatialBroadcastDecoder(nn.Module):
     self._height = hparams.input_height
     self._width = hparams.input_width
     self.decoder = nn.Sequential(
-      nn.Conv2d(hparams.z_dim + 2, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3),
-      nn.ReLU(True),
-      nn.Conv2d(32, hparams.comp_vae_out_channels, 1)
+        nn.Conv2d(hparams.z_dim + 2, 32, 3),
+        nn.ReLU6(True),
+        nn.Conv2d(32, 32, 3),
+        nn.ReLU6(True),
+        nn.Conv2d(32, 32, 3),
+        nn.ReLU6(True),
+        nn.Conv2d(32, 32, 3),
+        nn.ReLU6(True),
+        nn.Conv2d(32, hparams.comp_vae_out_channels, 1)
     )
+    # Coordinate axes:
+    x = torch.linspace(-1, 1, self._width + 8)
+    y = torch.linspace(-1, 1, self._height + 8)
+    x_b, y_b = torch.meshgrid(x, y)
+    self.register_buffer('x_b', x_b)
+    self.register_buffer('y_b', y_b)
 
-  @staticmethod
-  def spatial_broadcast(z, h, w):
+  def spatial_broadcast(self, z):
     # Batch size
     n = z.shape[0]
     # Expand spatially: (n, z_dim) -> (n, z_dim, h, w)
-    z_b = z.view(n, -1, 1, 1).expand(-1, -1, h, w)
-    # Coordinate axes:
-    x = torch.linspace(-1, 1, w, device=z.device)
-    y = torch.linspace(-1, 1, h, device=z.device)
-    x_b, y_b = torch.meshgrid(x, y)
+    z_b = z.view(n, -1, 1, 1).expand(-1, -1, self._height + 8, self._width + 8)
     # Expand from (h, w) -> (n, 1, h, w)
-    x_b = x_b.expand(n, 1, -1, -1)
-    y_b = y_b.expand(n, 1, -1, -1)
+    x_b = self.x_b.expand(n, 1, -1, -1)
+    y_b = self.y_b.expand(n, 1, -1, -1)
     # Concatenate along the channel dimension, shape = (n, z_dim + 2, h, w)
     z_sb = torch.cat((z_b, x_b, y_b), dim=1)
     return z_sb
 
-  def forward(self, z, h=None, w=None):
-    if h is None:
-      h = self._height
-    if w is None:
-      w = self._width
-    
-    z_sb = self.spatial_broadcast(z, h + 8, w + 8)
+  def forward(self, z):    
+    z_sb = self.spatial_broadcast(z)
     output = self.decoder(z_sb)
     return output
 
@@ -90,18 +91,18 @@ class ComponentVAE(nn.Module):
     self._in_channels = hparams.input_channels
     self._z_dim = hparams.z_dim
     self.encoder = nn.Sequential(
-      nn.Conv2d(self._in_channels + 1, 32, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 64, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(64, 64, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Flatten(),
-      nn.Linear(height * height * 64, 256),
-      nn.ReLU(True),
-      nn.Linear(256, self._z_dim * 2)
+        nn.Conv2d(self._in_channels + 1, 32, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(32, 32, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(32, 64, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(64, 64, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Flatten(),
+        nn.Linear(height * height * 64, 256),
+        nn.ReLU(True),
+        nn.Linear(256, self._z_dim * 2)
     )
     self.decoder = SpatialBroadcastDecoder(hparams)
     self._bg_logvar = 2 * torch.tensor(hparams.background_std).log()
@@ -120,11 +121,6 @@ class ComponentVAE(nn.Module):
     return z_mu, z_logvar
 
   def forward(self, x, log_m_k, background=False):
-    """
-    :param x: Input image
-    :param log_m_k: Attention mask logits
-    :return: x_k and reconstructed mask logits
-    """
     z_mu, z_logvar = self.encode(x, log_m_k)
     z = self.reparameterize(z_mu, z_logvar) if self.training else z_mu
 
@@ -169,12 +165,12 @@ class AttentionNetwork(nn.Module):
     # self.downblock6 = AttentionBlock(n_filters * 8, n_filters * 8, resize=False)
     height = compute_output_size(hparams.input_height, 3, 1, 2, 4)
     self.mlp = nn.Sequential(
-      nn.Linear(height * height * n_filters * 8, 128),
-      nn.ReLU(inplace=True),
-      nn.Linear(128, 128),
-      nn.ReLU(inplace=True),
-      nn.Linear(128, height * height * n_filters * 8),
-      nn.ReLU(inplace=True)
+        nn.Linear(height * height * n_filters * 8, 128),
+        nn.ReLU(inplace=True),
+        nn.Linear(128, 128),
+        nn.ReLU(inplace=True),
+        nn.Linear(128, height * height * n_filters * 8),
+        nn.ReLU(inplace=True)
     )
 
     # self.upblock1 = AttentionBlock(2 * n_filters * 8, n_filters * 8)
@@ -221,18 +217,18 @@ class SimpleBetaVAE(nn.Module):
     super().__init__()
     self._z_dim = hparams.z_dim
     self.encoder = nn.Sequential(
-      nn.Conv2d(hparams.input_channels, 32, 3, stride=1, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 32, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(32, 64, 3, stride=1, padding=1),
-      nn.ReLU(True),
-      nn.Conv2d(64, 64, 3, stride=2, padding=1),
-      nn.ReLU(True),
-      nn.Flatten(),
-      nn.Linear(7 * 7 * 64, self._z_dim * 2),
-      nn.ReLU(True),
-      nn.Linear(self._z_dim * 2, self._z_dim * 2)
+        nn.Conv2d(hparams.input_channels, 32, 3, stride=1, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(32, 32, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(32, 64, 3, stride=1, padding=1),
+        nn.ReLU(True),
+        nn.Conv2d(64, 64, 3, stride=2, padding=1),
+        nn.ReLU(True),
+        nn.Flatten(),
+        nn.Linear(7 * 7 * 64, self._z_dim * 2),
+        nn.ReLU(True),
+        nn.Linear(self._z_dim * 2, self._z_dim * 2)
     )
     self.decoder = SpatialBroadcastDecoder(hparams)
 
