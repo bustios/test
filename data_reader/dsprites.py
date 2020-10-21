@@ -43,7 +43,7 @@ class MultiDSpritesDataModule(LightningDataModule):
     )
 
   def train_dataloader(self):
-    return DataLoader(self.train_dataset, shuffle=False, **self.kwargs)
+    return DataLoader(self.train_dataset, shuffle=True, **self.kwargs)
 
   # def val_dataloader(self):
   #   return DataLoader(self.val_dataset, shuffle=False, **self.kwargs)

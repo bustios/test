@@ -40,21 +40,6 @@ class MONet(pl.LightningModule):
     optimizer = torch.optim.RMSprop(parameters, lr=self.hparams.learning_rate)
     return optimizer
 
-  # def encode(self, x):
-  #   shape = list(x.shape)
-  #   shape[1] = 1
-  #   if log_s_k is None:
-  #     log_s_k = x.new_zeros(shape)
-    
-  #   # Derive mask from current scope
-  #   if k != self.hparams.num_slots - 1:
-  #     log_alpha_k = self.attention_net(x, log_s_k)
-  #     log_m_k = log_s_k + log_alpha_k
-  #     # Compute next scope
-  #     log_s_k += (1. - log_alpha_k.exp()).clamp(min=self.eps).log()
-  #   else:
-  #     log_m_k = log_s_k
-
   def compute_losses(self, x):
     encoder_loss = 0
     decoder_loss = []
@@ -138,13 +123,3 @@ class MONet(pl.LightningModule):
         'train_mask_loss': mask_loss
     })
     return total_loss
-
-  # def validation_step(self, batch, batch_idx):
-  #   x, y = batch
-  #   total_loss, encoder_loss, decoder_loss, mask_loss = self.compute_losses(x)
-    # if self.current_epoch == self.trainer.max_epochs - 1:
-    #   x = x.view(-1, 1, self.hparams.input_height, self.hparams.input_width)
-    #   self.codes.append(model_output['z_mean'])
-    #   self.labels.extend(y.view(-1).tolist())
-    #   self.images.append(x)
-    # return total_loss
