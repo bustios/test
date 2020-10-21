@@ -1,7 +1,7 @@
 import time
 import torch
 import pytorch_lightning as pl
-import args_parser
+import options
 from data_reader.mnist import MNISTDataModule
 from models.beta_vae import BetaVAE
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
@@ -22,7 +22,7 @@ class LoggerCallback(Callback):
 
 def train():
   pl.seed_everything(0)
-  parser = args_parser.get_parser()
+  parser = options.parse()
   parser.set_defaults(input_channels=1, comp_vae_out_channels=1, 
       input_height=28, input_width=28)
   parser.add_argument('--image_type', default=0, type=int)

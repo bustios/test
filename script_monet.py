@@ -1,7 +1,7 @@
 import time
 import torch
 import pytorch_lightning as pl
-import args_parser
+import options
 from data_reader.dsprites import MultiDSpritesDataModule
 from models.monet import MONet
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
@@ -23,7 +23,7 @@ class LoggerCallback(Callback):
 
 def train():
   pl.seed_everything(0)
-  parser = args_parser.get_parser()
+  parser = options.parse()
   parser = pl.Trainer.add_argparse_args(parser)
   args = parser.parse_args()
 

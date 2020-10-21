@@ -1,6 +1,6 @@
 import torch
 import pytorch_lightning as pl
-import args_parser
+import options
 from models.beta_vae import BetaVAE
 from data_reader.mnist import MNISTDataModule
 from visualize.visualize_model import visualize
@@ -19,7 +19,7 @@ def get_ordered_batch(val_dataloader):
 
 def visualize_outputs():
   pl.seed_everything(0)
-  parser = args_parser.get_parser()
+  parser = options.parse()
   parser.add_argument('checkpoint_path', type=str)
   parser.add_argument('--output_dir', default='./logs', type=str)
   args = parser.parse_args()
