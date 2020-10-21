@@ -4,8 +4,7 @@ import pytorch_lightning as pl
 import options
 from data_reader.dsprites import MultiDSpritesDataModule
 from models.monet import MONet
-from pytorch_lightning.callbacks import Callback, ModelCheckpoint
-# from pytorch_lightning.loggers import CometLogger
+from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
 
 
 class LoggerCallback(Callback):
@@ -32,19 +31,26 @@ def train():
   model.init_parameters()
 
   logger_callback = LoggerCallback()
-  # checkpoint_callback = ModelCheckpoint(
-  #     save_top_k=1,
-  #     monitor='val_loss',
-  #     mode='min',
-  #     prefix=model.__class__.__name__+'_'
-  # )
+  checkpoint_callback = ModelCheckpoint(
+      save_top_k=1,
+      monitor='train_loss',
+      mode='min',
+      prefix=model.__class__.__name__+'_'
+  )
+  early_stop_callback = EarlyStopping(
+      monitor='train_loss',
+      min_delta=0.01,
+      patience=10,
+      verbose=False,
+      mode='min'
+  )
 
   trainer = pl.Trainer.from_argparse_args(
       args,
-      # checkpoint_callback=checkpoint_callback,
-      # callbacks=[logger_callback],
+      checkpoint_callback=checkpoint_callback,
+      callbacks=[early_stop_callback],
       deterministic=True,
-      # log_every_n_steps=100,
+      log_every_n_steps=100,
       # num_sanity_val_steps=0
   )
 
@@ -58,7 +64,7 @@ def train():
     s = time_elapsed % 60
     print(f'Training complete in {h:.0f}h {m:.0f}m {s:.0f}s')
 
-  # print(f'Best val. score: {checkpoint_callback.best_model_score:.4f}')
+  print(f'Lowest train error: {checkpoint_callback.best_model_score:.4f}')
 
 
 if __name__ == '__main__':

@@ -19,14 +19,12 @@ class MONet(pl.LightningModule):
     super().__init__()
     if isinstance(hparams, dict):
       hparams = argparse.Namespace(**hparams)
-    # Anything assigned to self.hparams will be saved automatically
+
+    self.save_hyperparameters(hparams)
     self.hparams = hparams
     self.attention_net = AttentionNetwork(hparams)
     self.comp_vae = ComponentVAE(hparams)
     self.eps = torch.finfo(torch.float).eps
-    # self.codes = []
-    # self.images = []
-    # self.labels = []
 
   def init_parameters(self):
     self.attention_net = init_net(self.attention_net)
