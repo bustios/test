@@ -56,23 +56,30 @@ class SpatialBroadcastDecoder(nn.Module):
         nn.ReLU6(True),
         nn.Conv2d(32, 32, 3),
         nn.ReLU6(True),
-        nn.Conv2d(32, hparams.comp_vae_out_channels, 1)
+        nn.Conv2d(32, hparams.input_channels + 1, 1)
     )
     # Coordinate axes:
-    x = torch.linspace(-1, 1, self._width + 8)
-    y = torch.linspace(-1, 1, self._height + 8)
-    x_b, y_b = torch.meshgrid(x, y)
-    self.register_buffer('x_b', x_b)
-    self.register_buffer('y_b', y_b)
+    # Gives the following error: RuntimeError: unsupported operation: more than
+    # one element of the written-to tensor refers to a single memory location. 
+    # Please clone() the tensor before performing the operation.
+    # x = torch.linspace(-1, 1, self._width + 8)
+    # y = torch.linspace(-1, 1, self._height + 8)
+    # x_b, y_b = torch.meshgrid(x, y)
+    # self.register_buffer('x_b', x_b)
+    # self.register_buffer('y_b', y_b)
 
   def spatial_broadcast(self, z):
     # Batch size
     n = z.shape[0]
     # Expand spatially: (n, z_dim) -> (n, z_dim, h, w)
     z_b = z.view(n, -1, 1, 1).expand(-1, -1, self._height + 8, self._width + 8)
+    # Coordinate axes:
+    x = torch.linspace(-1, 1, self._width + 8)
+    y = torch.linspace(-1, 1, self._height + 8)
+    x_b, y_b = torch.meshgrid(x, y)
     # Expand from (h, w) -> (n, 1, h, w)
-    x_b = self.x_b.expand(n, 1, -1, -1)
-    y_b = self.y_b.expand(n, 1, -1, -1)
+    x_b = x_b.expand(n, 1, -1, -1)
+    y_b = y_b.expand(n, 1, -1, -1)
     # Concatenate along the channel dimension, shape = (n, z_dim + 2, h, w)
     z_sb = torch.cat((z_b, x_b, y_b), dim=1)
     return z_sb
@@ -125,10 +132,10 @@ class ComponentVAE(nn.Module):
     z = self.reparameterize(z_mu, z_logvar) if self.training else z_mu
 
     output = self.decoder(z)
+    m_logits = output[:, self._in_channels:]
     x_mu = output[:, :self._in_channels]
     x_logvar = self._bg_logvar if background else self._fg_logvar
-    m_logits = output[:, self._in_channels:]
-
+    
     return m_logits, x_mu, x_logvar, z_mu, z_logvar
 
 
