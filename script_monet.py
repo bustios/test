@@ -22,7 +22,7 @@ class LoggerCallback(Callback):
 
 def train():
   pl.seed_everything(0)
-  parser = options.parse()
+  parser = options.get_parser()
   parser = pl.Trainer.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -35,7 +35,7 @@ def train():
       save_top_k=1,
       monitor='train_loss',
       mode='min',
-      prefix=model.__class__.__name__+'_'
+      prefix=model.__class__.__name__
   )
   early_stop_callback = EarlyStopping(
       monitor='train_loss',
@@ -50,7 +50,8 @@ def train():
       checkpoint_callback=checkpoint_callback,
       callbacks=[early_stop_callback],
       deterministic=True,
-      log_every_n_steps=100,
+      log_every_n_steps=50,
+      log_gpu_memory='min_max',
       # num_sanity_val_steps=0
   )
 

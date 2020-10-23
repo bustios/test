@@ -22,7 +22,7 @@ class LoggerCallback(Callback):
 
 def train():
   pl.seed_everything(0)
-  parser = options.parse()
+  parser = options.get_parser()
   parser.set_defaults(input_channels=1, comp_vae_out_channels=1, 
       input_height=28, input_width=28)
   parser.add_argument('--image_type', default=0, type=int)

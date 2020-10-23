@@ -19,7 +19,7 @@ def get_ordered_batch(val_dataloader):
 
 def visualize_outputs():
   pl.seed_everything(0)
-  parser = options.parse()
+  parser = options.get_parser()
   parser.add_argument('checkpoint_path', type=str)
   parser.add_argument('--output_dir', default='./logs', type=str)
   args = parser.parse_args()
