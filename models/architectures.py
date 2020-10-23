@@ -68,14 +68,14 @@ class SpatialBroadcastDecoder(nn.Module):
     # self.register_buffer('x_b', x_b)
     # self.register_buffer('y_b', y_b)
 
-  def spatial_broadcast(self, z):
+  def spatial_broadcast(self, z, h, w):
     # Batch size
     n = z.shape[0]
     # Expand spatially: (n, z_dim) -> (n, z_dim, h, w)
-    z_b = z.view(n, -1, 1, 1).expand(-1, -1, self._height + 8, self._width + 8)
+    z_b = z.view(n, -1, 1, 1).expand(-1, -1, h, w)
     # Coordinate axes:
-    x = torch.linspace(-1, 1, self._width + 8)
-    y = torch.linspace(-1, 1, self._height + 8)
+    x = torch.linspace(-1, 1, w, device=z.device)
+    y = torch.linspace(-1, 1, h, device=z.device)
     x_b, y_b = torch.meshgrid(x, y)
     # Expand from (h, w) -> (n, 1, h, w)
     x_b = x_b.expand(n, 1, -1, -1)
@@ -85,7 +85,7 @@ class SpatialBroadcastDecoder(nn.Module):
     return z_sb
 
   def forward(self, z):    
-    z_sb = self.spatial_broadcast(z)
+    z_sb = self.spatial_broadcast(z, self._height + 8, self._width + 8)
     output = self.decoder(z_sb)
     return output
 
