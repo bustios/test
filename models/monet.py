@@ -26,6 +26,59 @@ class MONet(pl.LightningModule):
     self.comp_vae = ComponentVAE(hparams)
     self.eps = torch.finfo(torch.float).eps
 
+  def forward(self, x):
+    attention_masks = []
+    decoder_masks = []
+    x_masked_entities = []
+    x_unmasked_components = []
+    x_tilde = 0
+    z_means = []
+    z_logvars = []
+
+    # Initial s_k = 1: shape = (N, 1, H, W)
+    shape = list(x.shape)
+    shape[1] = 1
+    log_s_k = x.new_zeros(shape)
+
+    for k in range(self.hparams.num_slots):
+      # Derive mask from current scope
+      if k != self.hparams.num_slots - 1:
+        log_alpha_k = self.attention_net(x, log_s_k)
+        log_m_k = log_s_k + log_alpha_k
+        # Compute next scope
+        log_s_k += (1. - log_alpha_k.exp()).clamp(min=self.eps).log()
+      else:
+        log_m_k = log_s_k
+
+      # Get component and mask reconstruction, as well as the z_k parameters
+      m_tilde_k_logits, x_mu_k, x_logvar_k, z_mu_k, z_logvar_k = self.comp_vae(x, log_m_k, k == 0)
+      
+      # Accumulate
+      attention_mask_k = log_m_k.exp()
+      attention_masks.append(attention_mask_k)
+      decoder_masks.append(m_tilde_k_logits)
+      # x_k_masked = attention_mask_k * x_mu_k
+      # x_masked_entities.append(x_k_masked)
+      x_unmasked_components.append(x_mu_k)
+      z_means.append(z_mu_k.unsqueeze(1))
+      z_logvars.append(z_logvar_k.unsqueeze(1))
+      
+      # Iteratively reconstruct the output image
+      # x_tilde += x_k_masked
+
+    attention_masks = torch.cat(attention_masks, dim=1)
+    decoder_masks = torch.cat(decoder_masks, dim=1).softmax(dim=1)
+    output = {
+        'attention_masks': attention_masks,
+        'decoder_masks': decoder_masks,
+        # 'x': x_tilde,
+        # 'x_masked_entities': x_masked_entities,
+        'x_unmasked_components': x_unmasked_components,
+        'z_means': z_means,
+        'z_logvars': z_logvars
+    }
+    return output
+
   def init_parameters(self):
     self.attention_net = init_net(self.attention_net)
     self.comp_vae = init_net(self.comp_vae)
@@ -41,11 +94,8 @@ class MONet(pl.LightningModule):
   def compute_losses(self, x):
     encoder_loss = 0
     decoder_loss = []
-    masks = []
-    m_tilde_logits = []
-    x_mu = []
-    x_masked = []
-    x_tilde = 0
+    attention_masks = []
+    decoder_masks = []
 
     # Initial s_k = 1: shape = (N, 1, H, W)
     shape = list(x.shape)
@@ -72,32 +122,25 @@ class MONet(pl.LightningModule):
       loss_k = self.compute_reconstruction_loss(x, x_mu_k, x_logvar_k, log_m_k)
       decoder_loss.append(loss_k.unsqueeze(1))
 
-      mask_k = log_m_k.exp()
-      x_k_masked = mask_k * x_mu_k
-      # # Iteratively reconstruct the output image
-      # x_tilde += x_k_masked
-      # Accumulate
-      masks.append(mask_k)
-      m_tilde_logits.append(m_tilde_k_logits)
+      atten_mask_k = log_m_k.exp()
+      x_k_masked = atten_mask_k * x_mu_k
 
-      # x_mu.append(x_mu_k.unsqueeze(1))
-      # x_masked.append(x_k_masked.unsqueeze(1))
+      # Accumulate
+      attention_masks.append(atten_mask_k)
+      decoder_masks.append(m_tilde_k_logits)
 
     decoder_loss = torch.cat(decoder_loss, dim=1)
-    masks = torch.cat(masks, dim=1)
-    m_tilde_logits = torch.cat(m_tilde_logits, dim=1)
-    
-    # m_tilde = m_tilde_logits.softmax(dim=1)
-    # x_mu = torch.cat(x_mu, dim=1)
-    # x_masked = torch.cat(x_masked, dim=1)
-
-    # return masks, m_tilde, x_mu, x_masked, x_tilde
+    attention_masks = torch.cat(attention_masks, dim=1)
+    decoder_masks = torch.cat(decoder_masks, dim=1)
 
     n = x.shape[0]
     encoder_loss /= n
     decoder_loss = -torch.logsumexp(decoder_loss, dim=1).sum() / n
-    mask_loss = nn.functional.kl_div(m_tilde_logits.log_softmax(dim=1), masks, 
-                                     reduction='batchmean')
+    mask_loss = nn.functional.kl_div(
+        decoder_masks.log_softmax(dim=1), 
+        attention_masks, 
+        reduction='batchmean'
+    )
     total_loss = self.hparams.beta * encoder_loss + decoder_loss \
                  + self.hparams.gamma * mask_loss
 
